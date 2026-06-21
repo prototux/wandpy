@@ -25,8 +25,8 @@ async def main():
 
     # Print IMU data for 10 seconds
     def on_imu(data):
-        print(f"Euler: {data.to_euler_angles()}")
-        print(f"Raw quaternions: {data.raw_components}")
+        print(f"Euler: {data.euler}")
+        print(f"Raw quaternions: {data.raw}")
 
     wand.on_imu_quaternions = on_imu
 
