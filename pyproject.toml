@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wandpy"
+version = "1.0.0"
+description = "Python library for controlling the Kano Coding Wand with IMU, LED, and haptic feedback"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+authors = [
+    {name = "Jason 'prototux' F.", email = "jason@prototux.net"}
+]
+keywords = ["bluetooth", "ble", "wand", "imu", "iot", "kano"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "bleak>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "black",
+    "ruff",
+]
+
+[project.urls]
+Homepage = "https://github.com/prototux/wandpy"
+Issues = "https://github.com/prototux/wandpy/issues"
