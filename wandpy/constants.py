@@ -80,6 +80,8 @@ class Color:
     SILVER = None
 
 # Initialize color constants
+Color.OFF = Color(0, 0, 0)
+Color.BLACK = Color.OFF
 Color.RED = Color(255, 0, 0)
 Color.GREEN = Color(0, 255, 0)
 Color.BLUE = Color(0, 0, 255)
