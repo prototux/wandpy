@@ -176,6 +176,7 @@ class Wand:
 
         # Button polling
         self._button_poll_task: Optional[asyncio.Task] = None
+        self._button_batch_task: Optional[asyncio.Task] = None
         self._pending_button_value: Optional[int] = None
         self._button_batch_interval_ms = 2.0
 
@@ -289,7 +290,7 @@ class Wand:
         self.state.connected = False
 
         # Cancel all background tasks
-        for task in (self._button_poll_task, self._button_hold_task, self._keepalive_task):
+        for task in (self._button_poll_task, self._button_batch_task, self._button_hold_task, self._keepalive_task):
             if task:
                 task.cancel()
                 try:
@@ -476,8 +477,8 @@ class Wand:
 
         self._pending_button_value = data[0]
 
-        if self._button_poll_task is None or self._button_poll_task.done():
-            self._button_poll_task = asyncio.create_task(self._process_button_after_delay())
+        if self._button_batch_task is None or self._button_batch_task.done():
+            self._button_batch_task = asyncio.create_task(self._process_button_after_delay())
 
     async def _process_button_after_delay(self) -> None:
         """Wait for burst to settle, then process button value."""
