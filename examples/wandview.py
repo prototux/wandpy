@@ -2,7 +2,11 @@
 """
 Wand Data Visualizer - Uses wandpy library with orientation projections
 
+Works with the Kano Coding Wand and the Magic Caster Wand (the Fused view
+stays empty on the Magic Caster, which has no on-device fusion).
+
 Usage:
+    python wandview.py                      # Scan and pick a wand
     python wandview.py AA:BB:CC:DD:EE:FF
 """
 
@@ -209,9 +213,9 @@ class WandVisualizer:
                 GraphSeries("z", self.COLORS["blue"], lambda d: d.accel.get("z") if d.accel else None),
             ], (-2048, 2048)),
             "raw_gyro": GraphView("Raw Gyroscope", [
-                GraphSeries("p", self.COLORS["red"], lambda d: d.gyro.get("p") if d.gyro else None),
-                GraphSeries("r", self.COLORS["green"], lambda d: d.gyro.get("r") if d.gyro else None),
-                GraphSeries("y", self.COLORS["blue"], lambda d: d.gyro.get("y") if d.gyro else None),
+                GraphSeries("0", self.COLORS["red"], lambda d: d.gyro_xyz[0] if d.gyro_xyz else None),
+                GraphSeries("1", self.COLORS["green"], lambda d: d.gyro_xyz[1] if d.gyro_xyz else None),
+                GraphSeries("2", self.COLORS["blue"], lambda d: d.gyro_xyz[2] if d.gyro_xyz else None),
             ], (-32768, 32767)),
             "raw_mag": GraphView("Raw Magnetometer", [
                 GraphSeries("x", self.COLORS["red"], lambda d: d.mag.get("x") if d.mag else None),
@@ -282,10 +286,10 @@ class WandVisualizer:
             if not devices:
                 print("No wands found!")
                 return False
-            for i, (addr, name, _) in enumerate(devices):
-                print(f"  [{i}] {addr} - {name}")
-            choice = int(input("Select wand: "))
-            target = devices[choice][0]
+            for i, device in enumerate(devices):
+                print(f"  [{i}] {device}")
+            choice = int(input("Select wand: ")) if len(devices) > 1 else 0
+            target = devices[choice]
 
         self.wand.on_imu_quaternions = self._on_imu_quaternions
         self.wand.on_imu_raw = self._on_imu_raw
@@ -295,7 +299,7 @@ class WandVisualizer:
 
         success = await self.wand.connect(target)
         if success:
-            print(f"Connected to {target}")
+            print(f"Connected to {self.wand.address} ({self.wand.wand_type.value})")
             await self.wand.set_led(Color.TEAL)
         return success
 
@@ -958,18 +962,15 @@ class WandVisualizer:
         elif self.button_rects.get("calq") and self.button_rects["calq"].collidepoint(pos):
             asyncio.create_task(self.wand.reset_quaternions())
         elif self.button_rects.get("calm") and self.button_rects["calm"].collidepoint(pos):
-            asyncio.create_task(self.wand.calibrate_magnetometer())
+            asyncio.create_task(self.wand.calibrate_imu())
 
     # ============== MAIN LOOP ==============
 
     async def run(self):
-        self.init_pygame()
-        if not self.mac_address:
-            print("No MAC address provided. Use: python wand_visualizer.py AA:BB:CC:DD:EE:FF")
-            self.running = False
-            pygame.quit()
+        if not await self.connect():
+            print("Could not connect to a wand.")
             return
-        await self.connect()
+        self.init_pygame()
         try:
             while self.running:
                 for event in pygame.event.get():
@@ -993,7 +994,7 @@ class WandVisualizer:
                         elif event.key == K_c and self.wand.is_connected:
                             asyncio.create_task(self.wand.reset_quaternions())
                             await asyncio.sleep(0.1)
-                            asyncio.create_task(self.wand.calibrate_magnetometer())
+                            asyncio.create_task(self.wand.calibrate_imu())
                     elif event.type == MOUSEBUTTONDOWN:
                         if event.button == 1:
                             self.handle_click(event.pos)
