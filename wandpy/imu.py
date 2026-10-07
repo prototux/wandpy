@@ -5,6 +5,12 @@ This module defines the data structures returned by the wand's IMU sensors.
 Each class parses data at initialization, making both raw and parsed/converted
 values available as attributes.
 
+The same classes are used for every wand type:
+- QuaternionData comes from the Kano wand's on-device fusion, or from WandPy's
+  orientation filter for the Magic Caster wand (which only streams raw data).
+- RawData holds a single accelerometer/gyroscope(/magnetometer) sample.
+- FusedData is specific to the Kano wand.
+
 Usage:
     >>> # Quaternion data
     >>> def on_imu(data):
@@ -21,6 +27,13 @@ import math
 import struct
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple
+
+from wandpy.constants import WandType
+
+# Magic Caster IMU scale factors (from the official app's IMUSample)
+MAGIC_CASTER_ACCEL_SCALE = 1.0 / 2048.0  # LSB -> g
+MAGIC_CASTER_GYRO_SCALE = 0.0010908308  # LSB -> rad/s
+MAGIC_CASTER_IMU_RATE_HZ = 234.0  # Samples per second
 
 @dataclass
 class QuaternionData:
@@ -43,11 +56,11 @@ class QuaternionData:
         ...     print(f"Heading: {data.yaw:.1f}°")
     """
 
-    # Raw quaternion components as received from the wand (-1000 to +1000)
-    q1: int  # w component
-    q2: int  # x component
-    q3: int  # y component
-    q4: int  # z component
+    # Raw quaternion components as received from the wand (-1024 to +1024)
+    q1: int  # x component
+    q2: int  # y component
+    q3: int  # z component
+    q4: int  # w component
 
     # Original bytes for advanced use/debugging
     raw_bytes: bytes = field(repr=False)
@@ -75,6 +88,22 @@ class QuaternionData:
             self.yaw = None
             self.pitch = None
             self.roll = None
+
+    @classmethod
+    def from_xyzw(cls, x: float, y: float, z: float, w: float) -> "QuaternionData":
+        """
+        Build QuaternionData from a unit quaternion given as floats.
+
+        Components are scaled by 1024 to match the Kano wire format, so data
+        computed by WandPy behaves exactly like data sent by a Kano wand.
+        """
+        q = [max(-32768, min(32767, round(v * 1024.0))) for v in (x, y, z, w)]
+        return cls(q1=q[0], q2=q[1], q3=q[2], q4=q[3], raw_bytes=struct.pack("<4h", *q))
+
+    @property
+    def xyzw(self) -> Tuple[float, float, float, float]:
+        """The quaternion as normalized-scale floats (x, y, z, w)."""
+        return (self.q1 / 1024.0, self.q2 / 1024.0, self.q3 / 1024.0, self.q4 / 1024.0)
 
     def _compute_euler(self) -> Optional[Dict[str, float]]:
         """
@@ -187,18 +216,32 @@ class QuaternionData:
 @dataclass
 class RawData:
     """
-    Raw 9-axis IMU sensor data (accelerometer, magnetometer, gyroscope).
+    Raw IMU sensor sample (accelerometer, gyroscope and, on Kano, magnetometer).
 
-    The wand sends 18 bytes containing 9 signed 16-bit values:
+    Kano wand: 18 bytes containing 9 signed 16-bit values:
     - First 3 values: accelerometer (x, y, z)
     - Next 3 values: magnetometer (x, y, z)
     - Last 3 values: gyroscope (pitch, roll, yaw)
 
+    Magic Caster wand: 12 bytes containing 6 signed 16-bit values:
+    - First 3 values: gyroscope (x, y, z)
+    - Last 3 values: accelerometer (x, y, z)
+    The Magic Caster batches several samples per BLE packet; WandPy delivers
+    them one at a time. Physical units are available in `accel_g` and
+    `gyro_rads`/`gyro_dps`.
+
     Attributes:
-        raw: The original 9 integers as a tuple.
+        raw: The original integers as a tuple.
         accel: Accelerometer values as {'x', 'y', 'z'}.
-        mag: Magnetometer values as {'x', 'y', 'z'}.
-        gyro: Gyroscope values as {'p', 'r', 'y'}.
+        mag: Magnetometer values as {'x', 'y', 'z'} (None on Magic Caster).
+        gyro: Gyroscope values as {'p', 'r', 'y'} on Kano, {'x', 'y', 'z'} on Magic Caster.
+        accel_xyz, gyro_xyz, mag_xyz: The same values as tuples, in sensor
+            order, for code that must work with any wand.
+        accel_g: Acceleration in g, when the scale is known (Magic Caster).
+        gyro_rads, gyro_dps: Angular rate in rad/s and deg/s, when the scale
+            is known (Magic Caster).
+        sample_index: Sample counter from the wand, when provided (Magic Caster).
+        wand_type: Which wand produced the sample.
         raw_bytes: Original bytes for advanced use/debugging.
         valid: True if the data was parsed successfully.
         error: Error message if parsing failed, else None.
@@ -207,16 +250,23 @@ class RawData:
     Example:
         >>> def on_raw(data):
         ...     print(data.accel)
-        ...     print(data.gyro["x"])
+        ...     print(data.accel_xyz)
     """
 
     raw_bytes: bytes
+    wand_type: WandType = WandType.KANO
+    sample_index: Optional[int] = None
 
     # --- Parsed attributes (computed in __post_init__) ---
     raw: Optional[Tuple[int, ...]] = field(init=False)
     accel: Optional[Dict[str, int]] = field(init=False)
     mag: Optional[Dict[str, int]] = field(init=False)
     gyro: Optional[Dict[str, int]] = field(init=False)
+    accel_xyz: Optional[Tuple[int, int, int]] = field(init=False, repr=False)
+    gyro_xyz: Optional[Tuple[int, int, int]] = field(init=False, repr=False)
+    mag_xyz: Optional[Tuple[int, int, int]] = field(init=False, repr=False)
+    accel_g: Optional[Tuple[float, float, float]] = field(init=False, repr=False)
+    gyro_rads: Optional[Tuple[float, float, float]] = field(init=False, repr=False)
     valid: bool = field(init=False)
     error: Optional[str] = field(init=False)
     raw_hex: str = field(init=False)
@@ -227,23 +277,55 @@ class RawData:
         self.accel = None
         self.mag = None
         self.gyro = None
+        self.accel_xyz = None
+        self.gyro_xyz = None
+        self.mag_xyz = None
+        self.accel_g = None
+        self.gyro_rads = None
         self.error = None
 
-        if len(self.raw_bytes) != 18:
+        expected = 12 if self.wand_type == WandType.MAGIC_CASTER else 18
+        if len(self.raw_bytes) != expected:
             self.valid = False
-            self.error = f"Expected 18 bytes, got {len(self.raw_bytes)}"
+            self.error = f"Expected {expected} bytes, got {len(self.raw_bytes)}"
             return
 
         try:
-            values = struct.unpack("<9h", self.raw_bytes)
-            self.raw = values
-            self.accel = {"x": values[0], "y": values[1], "z": values[2]}
-            self.mag = {"x": values[3], "y": values[4], "z": values[5]}
-            self.gyro = {"p": values[6], "r": values[7], "y": values[8]}
+            if self.wand_type == WandType.MAGIC_CASTER:
+                self._parse_magic_caster()
+            else:
+                self._parse_kano()
             self.valid = True
         except Exception as e:
             self.valid = False
             self.error = str(e)
+
+    def _parse_kano(self) -> None:
+        values = struct.unpack("<9h", self.raw_bytes)
+        self.raw = values
+        self.accel = {"x": values[0], "y": values[1], "z": values[2]}
+        self.mag = {"x": values[3], "y": values[4], "z": values[5]}
+        self.gyro = {"p": values[6], "r": values[7], "y": values[8]}
+        self.accel_xyz = (values[0], values[1], values[2])
+        self.mag_xyz = (values[3], values[4], values[5])
+        self.gyro_xyz = (values[6], values[7], values[8])
+
+    def _parse_magic_caster(self) -> None:
+        values = struct.unpack("<6h", self.raw_bytes)
+        self.raw = values
+        self.gyro_xyz = (values[0], values[1], values[2])
+        self.accel_xyz = (values[3], values[4], values[5])
+        self.gyro = dict(zip("xyz", self.gyro_xyz))
+        self.accel = dict(zip("xyz", self.accel_xyz))
+        self.accel_g = tuple(v * MAGIC_CASTER_ACCEL_SCALE for v in self.accel_xyz)
+        self.gyro_rads = tuple(v * MAGIC_CASTER_GYRO_SCALE for v in self.gyro_xyz)
+
+    @property
+    def gyro_dps(self) -> Optional[Tuple[float, float, float]]:
+        """Angular rate in degrees per second, when the scale is known."""
+        if self.gyro_rads is None:
+            return None
+        return tuple(math.degrees(v) for v in self.gyro_rads)
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -251,8 +333,11 @@ class RawData:
 
         Returns:
             Dictionary with keys:
-            - 'raw': tuple of 9 values or None
+            - 'raw': tuple of values or None
             - 'accel', 'mag', 'gyro': sensor dicts or None
+            - 'accel_g', 'gyro_rads': scaled tuples or None
+            - 'sample_index': int or None
+            - 'wand_type': str
             - 'valid': bool
             - 'error': error string or None
             - 'raw_hex': hex string of original bytes
@@ -262,6 +347,10 @@ class RawData:
             "accel": self.accel,
             "mag": self.mag,
             "gyro": self.gyro,
+            "accel_g": self.accel_g,
+            "gyro_rads": self.gyro_rads,
+            "sample_index": self.sample_index,
+            "wand_type": self.wand_type.value,
             "valid": self.valid,
             "error": self.error,
             "raw_hex": self.raw_hex,
@@ -276,12 +365,10 @@ class RawData:
         """
         if not self.valid:
             return f"RawData(valid=False, error='{self.error}', raw_hex={self.raw_hex})"
-        return (
-            f"RawData("
-            f"accel=({self.accel['x']}, {self.accel['y']}, {self.accel['z']}), "
-            f"mag=({self.mag['x']}, {self.mag['y']}, {self.mag['z']}), "
-            f"gyro=({self.gyro['p']}, {self.gyro['r']}, {self.gyro['y']}))"
-        )
+        ax, ay, az = self.accel_xyz
+        gx, gy, gz = self.gyro_xyz
+        mag = f"mag={self.mag_xyz}, " if self.mag_xyz is not None else ""
+        return f"RawData(accel=({ax}, {ay}, {az}), {mag}gyro=({gx}, {gy}, {gz}))"
 
 
 @dataclass
