@@ -146,6 +146,7 @@ class Wand:
         # BLE client
         self._client: Optional[BleakClient] = None
         self._connected = False
+        self._closing = False
         self._keepalive_task: Optional[asyncio.Task] = None
 
         # Connection tuning
@@ -250,6 +251,7 @@ class Wand:
             raise ValueError("No MAC address provided. Use scan() to find devices or provide mac_address to __init__ or connect().")
 
         self.mac_address = target_mac
+        self._closing = False
 
         try:
             # Create BLE client with disconnect callback
@@ -286,6 +288,7 @@ class Wand:
 
     async def disconnect(self) -> None:
         """Disconnect from the wand and clean up all background tasks."""
+        self._closing = True
         self._connected = False
         self.state.connected = False
 
@@ -325,6 +328,9 @@ class Wand:
 
     def _on_disconnect(self, client: BleakClient) -> None:
         """Handle unexpected disconnection."""
+        if self._closing:
+            return  # disconnect() was called, nothing unexpected
+
         logger.warning("Device disconnected unexpectedly")
         self._connected = False
         self.state.connected = False
@@ -344,6 +350,8 @@ class Wand:
             wait_time = min(2**attempt, 30)
             logger.info(f"Reconnecting in {wait_time}s... (attempt {attempt + 1})")
             await asyncio.sleep(wait_time)
+            if self._closing:
+                return
 
             if await self.connect():
                 logger.info("Reconnected successfully")
