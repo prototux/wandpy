@@ -180,6 +180,7 @@ class Wand:
         self._button_batch_task: Optional[asyncio.Task] = None
         self._pending_button_value: Optional[int] = None
         self._button_batch_interval_ms = 2.0
+        self._press_waiters: List[asyncio.Future] = []
 
         # --- User callbacks ---
         # Called with (bool) when button is pressed/released (legacy)
@@ -584,6 +585,10 @@ class Wand:
 
     def _emit_button_event(self, event: ButtonEvent, state: ButtonState) -> None:
         """Call the user's button event callback."""
+        if event == ButtonEvent.PRESSED:
+            for future in self._press_waiters:
+                if not future.done():
+                    future.set_result(True)
         if self.on_button_event:
             try:
                 self.on_button_event(event, state)
@@ -621,21 +626,15 @@ class Wand:
         Returns:
             True if pressed, False if timed out
         """
-        future = asyncio.Future()
-
-        def handler(event: ButtonEvent, state: ButtonState) -> None:
-            if event == ButtonEvent.PRESSED and not future.done():
-                future.set_result(True)
-
-        original_callback = self.on_button_event
-        self.on_button_event = handler
+        future = asyncio.get_running_loop().create_future()
+        self._press_waiters.append(future)
 
         try:
             return await asyncio.wait_for(future, timeout=timeout)
         except asyncio.TimeoutError:
             return False
         finally:
-            self.on_button_event = original_callback
+            self._press_waiters.remove(future)
 
     # ==================== Internal: Notification handlers ====================
     def _handle_imu_quaternions(self, sender: BleakGATTCharacteristic, data: bytearray) -> None:
