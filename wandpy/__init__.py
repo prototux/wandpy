@@ -34,7 +34,7 @@ from wandpy.wand import KanoWand, MagicCasterWand, Wand, WandState, connect, sca
 # Backward compatibility: the Kano UUIDs used to be the only ones
 WandUUIDs = KanoUUIDs
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 __all__ = [
     # Wands
     "Wand",
